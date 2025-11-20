@@ -22,6 +22,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role', // Tambahkan ini
+        'telegram_chat_id', // Tambahkan ini
     ];
     
     public function liveSessions()

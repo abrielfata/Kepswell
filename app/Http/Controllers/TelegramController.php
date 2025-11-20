@@ -73,12 +73,17 @@ class TelegramController extends Controller
                     $this->sendTelegramMessage($chatId, 
                         "✅ OCR Berhasil!\n\n" .
                         "💰 GMV Terdeteksi: Rp {$formattedGMV}\n\n" .
-                        "Data telah disimpan ke database."
+                        "⏳ Menyimpan ke database..."
                     );
                     
-                    // TODO: Simpan ke database
-                    // $this->saveLiveSession($chatId, $gmv, $filePath);
+                    // BARU: Simpan ke Database
+                    $saveResult = $this->saveLiveSession($chatId, $gmv, $filePath);
                     
+                    if ($saveResult['success']) {
+                         $this->sendTelegramMessage($chatId, "💾 DATA TERSIMPAN!\nSession ID: " . $saveResult['session_id']);
+                    } else {
+                         $this->sendTelegramMessage($chatId, "❌ Gagal Simpan: " . $saveResult['message']);
+                    }
                 } else {
                     $this->sendTelegramMessage($chatId, 
                         "⚠️ Tidak dapat mendeteksi GMV dari foto.\n\n" .
@@ -102,17 +107,43 @@ class TelegramController extends Controller
     private function handleText($update)
     {
         $chatId = $update['message']['chat']['id'];
-        $text = $update['message']['text'];
+        $text = trim($update['message']['text']);
+        $username = $update['message']['from']['username'] ?? 'User';
 
-        Log::info('Text message received', [
-            'chat_id' => $chatId,
-            'text' => $text
-        ]);
+        Log::info('Text received', ['chat_id' => $chatId, 'text' => $text]);
 
-        // Response sederhana
-        $response = "Halo! Kirim screenshot GMV untuk diproses.\n\n";
-        $response .= "📸 Kirim foto screenshot\n";
-        $response .= "🔍 Sistem akan extract angka GMV otomatis";
+        // 1. Logika Command /link
+        if (str_starts_with($text, '/link')) {
+            // Ambil email dari pesan: "/link host1@kepswell.com"
+            $parts = explode(' ', $text);
+            
+            if (count($parts) < 2) {
+                $this->sendTelegramMessage($chatId, "⚠️ Format salah.\nKetik: /link email-anda@gmail.com");
+                return response()->json(['status' => 'ok']);
+            }
+
+            $email = trim($parts[1]);
+            
+            // Cari user berdasarkan email
+            $user = \App\Models\User::where('email', $email)->first();
+
+            if (!$user) {
+                $this->sendTelegramMessage($chatId, "❌ Email tidak ditemukan di sistem.");
+                return response()->json(['status' => 'ok']);
+            }
+
+            // Simpan Chat ID ke database
+            $user->update(['telegram_chat_id' => $chatId]);
+
+            $this->sendTelegramMessage($chatId, "✅ Berhasil!\nAkun Anda ({$user->name}) telah terhubung dengan Bot ini.\nSekarang Anda bisa mengirim screenshot laporan.");
+            return response()->json(['status' => 'success_linked']);
+        }
+
+        // 2. Logika Default (Bukan command)
+        $response = "Halo, {$username}!\n\n";
+        $response .= "Untuk menghubungkan akun, ketik:\n";
+        $response .= "👉 /link email-anda@gmail.com\n\n";
+        $response .= "Setelah terhubung, kirim screenshot untuk lapor GMV.";
 
         $this->sendTelegramMessage($chatId, $response);
 
@@ -215,4 +246,52 @@ private function sendTelegramMessage($chatId, $text)
 
     return json_decode($result, true);
 }
+private function saveLiveSession($chatId, $gmv, $imagePath)
+    {
+        // 1. Cari User pengirim
+        $user = \App\Models\User::where('telegram_chat_id', $chatId)->first();
+
+        if (!$user) {
+            return [
+                'success' => false,
+                'message' => 'Akun belum terhubung. Ketik /link email@anda.com dulu.'
+            ];
+        }
+
+        // 2. Cari Sesi Live Hari Ini
+        $today = now()->format('Y-m-d');
+        
+        // PERBAIKAN DISINI: Gunakan 'user_id' dan 'scheduled_at'
+        $session = LiveSession::where('user_id', $user->id)
+            ->whereDate('scheduled_at', $today) 
+            ->where('status', '!=', 'completed')
+            ->first();
+
+        if (!$session) {
+            return [
+                'success' => false,
+                'message' => "Tidak ada jadwal live aktif untuk Anda hari ini ({$today})."
+            ];
+        }
+
+        // 3. Update Data Sesi
+        try {
+            $session->update([
+                'gmv' => $gmv,
+                'screenshot_path' => $imagePath,
+                'status' => 'completed',
+            ]);
+            
+            return [
+                'success' => true,
+                'session_id' => $session->id
+            ];
+        } catch (\Exception $e) {
+            Log::error('DB Save Error: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Database error.'
+            ];
+        }
+    }
 }
