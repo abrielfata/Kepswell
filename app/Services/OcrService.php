@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use Google\Cloud\Vision\V1\ImageAnnotatorClient;
+use Google\Cloud\Vision\V1\Client\ImageAnnotatorClient;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
@@ -21,8 +21,8 @@ class OcrService
             }
 
             putenv('GOOGLE_APPLICATION_CREDENTIALS=' . $keyFilePath);
-            $this->client = new ImageAnnotatorClient();
-            
+            $this->client = new \Google\Cloud\Vision\V1\Client\ImageAnnotatorClient();
+                        
         } catch (\Exception $e) {
             Log::error('Error initializing OCR Service: ' . $e->getMessage());
             throw $e;
